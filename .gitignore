@@ -1,0 +1,15 @@
+
+.env
+
+
+gym.db
+*.db
+
+/build/
+/dist/
+*.exe
+TH_Gym_Manager.exe
+
+
+__pycache__/
+*.pyc
