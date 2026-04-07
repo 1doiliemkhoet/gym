@@ -80,3 +80,41 @@ def save_member_to_db(name, cccd, phone, email, package, gender, dob, price):
         return False, f"[ERROR] Hệ thống: {str(e)}"
     finally:
         if conn: conn.close()
+
+def check_cccd_match(cccd, gender, dob):
+    """Bóc tách và đối chiếu CCCD với Giới tính và Năm sinh"""
+    cccd = cccd.strip()
+    if not cccd:
+        return True, ""  # Bỏ qua nếu khách không nhập CCCD
+        
+    if len(cccd) != 12 or not cccd.isdigit():
+        return False, "CCCD phải bao gồm đúng 12 chữ số."
+
+    try:
+        # Lấy năm sinh từ chuỗi ngày sinh (DD-MM-YYYY)
+        birth_year = int(dob.split('-')[2])
+        short_year = str(birth_year)[-2:]
+    except:
+        return False, "Ngày sinh bị sai định dạng (Cần DD-MM-YYYY)."
+
+    # 1. Kiểm tra 2 số mã năm sinh (Vị trí số 5 và 6 trên CCCD)
+    cccd_year = cccd[4:6]
+    if cccd_year != short_year:
+        return False, f"2 số năm sinh trên CCCD ({cccd_year}) không khớp với năm sinh khai báo ({birth_year})."
+
+    # 2. Kiểm tra mã thế kỷ & giới tính (Vị trí số 4 trên CCCD)
+    gender_code = cccd[3]
+    century = birth_year // 100 + 1
+    
+    expected_codes = []
+    if century == 20:   # Sinh 1900-1999
+        expected_codes = ['0'] if gender == 'Nam' else ['1']
+    elif century == 21: # Sinh 2000-2099
+        expected_codes = ['2'] if gender == 'Nam' else ['3']
+    elif century == 22: # Sinh 2100-2199
+        expected_codes = ['4'] if gender == 'Nam' else ['5']
+
+    if gender_code not in expected_codes:
+        return False, f"Mã giới tính trên CCCD ({gender_code}) không khớp với giới tính '{gender}' và năm sinh '{birth_year}'."
+
+    return True, "Hợp lệ"

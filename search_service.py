@@ -100,3 +100,21 @@ def delete_member_logic(member_id):
         return False, str(e)
     finally:
         conn.close()
+def get_all_members_summary_logic():
+    from database import get_connection
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        sql = """
+            SELECT id, ho_ten, so_dien_thoai, ngay_het_han, trang_thai,
+                   CAST((julianday(ngay_het_han) - julianday(DATE('now'))) AS INTEGER) AS so_ngay_con_lai
+            FROM members 
+            ORDER BY so_ngay_con_lai ASC
+        """
+        cursor.execute(sql)
+        return True, cursor.fetchall()
+    except Exception as e:
+        return False, str(e)
+    finally:
+        if conn: conn.close()

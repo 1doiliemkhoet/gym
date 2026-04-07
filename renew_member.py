@@ -28,7 +28,7 @@ def renew_membership_logic(cccd_number, months_to_add):
         new_expiry = base_date + relativedelta(months=months_to_add)
 
 
-        price_mapping = {1: 300000, 3: 800000, 6: 1500000}
+        price_mapping = {1: 300000, 3: 900000, 6: 1800000}
         amount = price_mapping.get(months_to_add, 0)
 
 

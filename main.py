@@ -1,4 +1,5 @@
 import threading
+from wsgiref import headers
 import customtkinter as ctk
 from tkinter import messagebox
 import os
@@ -10,7 +11,7 @@ from check_in_member import check_in_by_cccd_logic, get_today_checkin_history
 from renew_member import renew_membership_logic
 from revenue_stats import get_revenue_summary, get_detailed_revenue_stats
 from export_excel import export_to_excel_logic 
-from search_service import search_member_logic, update_member_status_logic
+from search_service import get_all_members_summary_logic, get_all_members_summary_logic, search_member_logic, update_member_status_logic
 from mail_service import auto_check_and_send_reminders
 from suggestion_service import get_checkin_suggestions
 from body_metrics_service import save_body_metrics, get_metrics_history, get_metrics_history_detailed
@@ -63,6 +64,7 @@ class GymManagementApp(ctk.CTk):
         self.create_menu_button("Gia hạn Gói tập", self.show_renew)
         self.create_menu_button("Tìm kiếm Hội viên", self.show_search_screen)
         self.create_menu_button("Theo dõi sức khỏe", self.show_metrics_screen)
+        self.create_menu_button("Danh sách Hội viên", self.show_member_list)
         self.create_menu_button("Báo cáo Doanh thu", self.show_dashboard)
 
         # --- MAIN CONTENT AREA ---
@@ -70,7 +72,7 @@ class GymManagementApp(ctk.CTk):
         self.main_frame.grid(row=0, column=1, sticky="nsew", padx=30, pady=30)
 
         # Chạy quét mail tự động 
-        threading.Thread(target=self.run_auto_mail_scan, daemon=True).start()
+        #threading.Thread(target=self.run_auto_mail_scan, daemon=True).start()
         
         self.show_registration() 
 
@@ -131,7 +133,8 @@ class GymManagementApp(ctk.CTk):
         self.checkin_listbox.bind("<<ListboxSelect>>", lambda e: self.select_checkin_suggestion(widget))
 
     def select_checkin_suggestion(self, target_entry):
-        """Làm sạch tên khi chọn để tránh lỗi tìm kiếm [cite: 2026-03-04]"""
+        """Tách tên chuẩn xác sau khi thay đổi định dạng hiển thị"""
+        import tkinter as tk
         if not target_entry.winfo_exists() or not self.checkin_listbox:
             self.hide_checkin_suggestions()
             return
@@ -142,7 +145,7 @@ class GymManagementApp(ctk.CTk):
             selected_item = self.current_suggestions_data[idx]
             
             display_text = selected_item["display"]
-            clean_name = display_text.split("(")[0].strip() if "(" in display_text else display_text
+            clean_name = display_text.split(" - SĐT:")[0].strip() if " - SĐT:" in display_text else display_text
             
             target_entry.delete(0, tk.END)
             target_entry.insert(0, clean_name)
@@ -151,6 +154,7 @@ class GymManagementApp(ctk.CTk):
             self.hide_checkin_suggestions()
 
             if hasattr(self, 'metrics_history_frame') and self.metrics_history_frame.winfo_exists():
+                from search_service import search_member_logic
                 success, data = search_member_logic(clean_name, "name")
                 if success and data:
                     self.refresh_metrics_history(data[0]['id'])
@@ -196,15 +200,43 @@ class GymManagementApp(ctk.CTk):
         ctk.CTkButton(card, text="XÁC NHẬN & LƯU", fg_color="#2ecc71", height=45, command=self.handle_registration).pack(pady=20)
 
     def handle_registration(self):
-        try:
-            success, msg = save_member_to_db(
-                self.entry_name.get(), self.entry_cccd.get(), self.entry_phone.get(), 
-                self.entry_email.get(), self.package_var.get(), 
-                self.gender_var.get(), self.entry_dob.get(), float(self.entry_price.get())
+        name = self.entry_name.get()
+        cccd = self.entry_cccd.get()
+        phone = self.entry_phone.get()
+        email = self.entry_email.get()
+        package = self.package_var.get()
+        gender = self.gender_var.get()
+        dob = self.entry_dob.get()
+        price_str = self.entry_price.get()
+
+        from add_member import check_cccd_match
+        is_valid, warning_msg = check_cccd_match(cccd, gender, dob)
+        
+        if not is_valid:
+            import tkinter.messagebox as messagebox
+            confirm = messagebox.askyesno(
+                "Phát hiện nghi vấn", 
+                f"⚠️ NGHI NGỜ CCCD GIẢ HOẶC SAI THÔNG TIN:\n\n{warning_msg}\n\nBạn vẫn muốn bỏ qua cảnh báo và tiếp tục lưu?"
             )
-            if success: messagebox.showinfo("Thành công", f"Hội viên đã được lưu!\nHạn dùng: {msg}")
-            else: messagebox.showerror("Lỗi", msg)
-        except ValueError: messagebox.showerror("Lỗi", "Giá tiền không hợp lệ!")
+            if not confirm:
+                return  
+
+        try:
+            price = float(price_str)
+            from add_member import save_member_to_db 
+            
+            success, msg = save_member_to_db(
+                name, cccd, phone, email, package, gender, dob, price
+            )
+            
+            import tkinter.messagebox as messagebox
+            if success: 
+                messagebox.showinfo("Thành công", f"Hội viên đã được lưu!\nHạn dùng: {msg}")
+            else: 
+                messagebox.showerror("Lỗi", msg)
+        except ValueError: 
+            import tkinter.messagebox as messagebox
+            messagebox.showerror("Lỗi", "Giá tiền không hợp lệ!")
 
     def show_checkin(self):
         self.clear_main_frame()
@@ -348,6 +380,36 @@ class GymManagementApp(ctk.CTk):
         self.metrics_history_frame.pack(fill="both", expand=True, padx=5)
         
         self.refresh_metrics_history(None)
+
+    def show_member_list(self):
+        self.clear_main_frame()
+        self.render_title("DANH SÁCH HỘI VIÊN")
+        
+        container = ctk.CTkScrollableFrame(self.main_frame, fg_color=COLORS["card"], height=500)
+        container.pack(fill="both", expand=True)
+
+        headers = [("Tên Hội Viên", 200), ("SĐT", 120), ("Ngày Hết Hạn", 120), ("Còn Lại", 100), ("Trạng Thái", 100)]
+        header_frame = ctk.CTkFrame(container, fg_color="#252525")
+        header_frame.pack(fill="x", pady=5)
+        for text, width in headers:
+            ctk.CTkLabel(header_frame, text=text, width=width, font=("Inter", 12, "bold")).pack(side="left", padx=10)
+
+        from search_service import get_all_members_summary_logic
+        success, members = get_all_members_summary_logic() 
+        if success:
+            for m in members:
+                row = ctk.CTkFrame(container, fg_color="transparent")
+                row.pack(fill="x", pady=2)
+                ctk.CTkLabel(row, text=m['ho_ten'], width=200, anchor="w").pack(side="left", padx=10)
+                ctk.CTkLabel(row, text=m['so_dien_thoai'], width=120).pack(side="left", padx=10)
+                ctk.CTkLabel(row, text=m['ngay_het_han'], width=120).pack(side="left", padx=10)
+                
+                days_left = m['so_ngay_con_lai']
+                text_days = f"{days_left} ngày" if days_left is not None else "N/A"
+                color_days = "#e74c3c" if days_left is not None and days_left <= 7 else "#2ecc71"
+                
+                ctk.CTkLabel(row, text=text_days, width=100, text_color=color_days).pack(side="left", padx=10)
+                ctk.CTkLabel(row, text=m['trang_thai'], width=100).pack(side="left", padx=10)
 
     def reset_metrics_input(self):
         """Xóa sạch các ô nhập liệu về trạng thái ban đầu [cite: 2026-03-04]"""
@@ -554,7 +616,7 @@ class GymManagementApp(ctk.CTk):
         threading.Thread(target=task, daemon=True).start()
 
     def show_search_screen(self):
-        """Màn hình tìm kiếm hội viên [cite: 2026-03-04]"""
+        """Màn hình tìm kiếm hội viên """
         self.clear_main_frame()
         self.render_title("TÌM KIẾM HỘI VIÊN")
         search_card = ctk.CTkFrame(self.main_frame, fg_color=COLORS["card"], corner_radius=15)
@@ -567,7 +629,7 @@ class GymManagementApp(ctk.CTk):
         self.detail_container.pack(fill="both", expand=True)
 
     def display_member_full_profile(self, member_data):
-        """Vẽ Tabview hiển thị mọi thông tin và các nút chức năng [cite: 2026-03-04]"""
+        """Vẽ Tabview hiển thị mọi thông tin và các nút chức năng """
         for widget in self.detail_container.winfo_children():
             widget.destroy()
 
@@ -616,6 +678,7 @@ class GymManagementApp(ctk.CTk):
             r = ctk.CTkFrame(t_payment, fg_color="#1e1e1e")
             r.pack(fill="x", pady=2, padx=10)
             ctk.CTkLabel(r, text=f"💵 {p['local_payment_date']}: {p['amount']:,.0f}đ - {p['content']}").pack(pady=5)
+    
     def handle_delete_member(self, member_id):
         """Xử lý khi bấm nút Xóa [cite: 2026-03-14]"""
         if messagebox.askyesno("Xác nhận", "Bạn có chắc chắn muốn xóa vĩnh viễn hội viên này và mọi lịch sử liên quan không?"):
@@ -628,8 +691,7 @@ class GymManagementApp(ctk.CTk):
                 self.entry_search.delete(0, 'end')
             else:
                 messagebox.showerror("Lỗi", msg)
-                
-                        
+                                  
     def handle_search(self):
         """Xử lý nút bấm tìm kiếm [cite: 2026-03-04]"""
         query = self.entry_search.get().strip()
