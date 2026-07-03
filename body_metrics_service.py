@@ -2,7 +2,7 @@ from database import get_connection
 from datetime import datetime
 
 def calculate_bmi_status(bmi):
-    """Phân loại BMI và trả về trạng thái [cite: 2026-03-04]"""
+    """Phân loại BMI và trả về trạng thái """
     if bmi < 18.5:
         return "Gầy", "#3498db", "Cần tăng cân"
     elif 18.5 <= bmi < 25:
@@ -16,12 +16,12 @@ def save_body_metrics(member_id, height, weight, note=""):
     """Tính BMI và lưu chỉ số mới vào Database [cite: 2026-01-28]"""
     conn = None
     try:
-        # 1. Tính toán BMI: BMI = weight(kg) / [height(m) ^ 2]
+        # 1. Tính toán BMI:
         height_m = float(height) / 100
         bmi = float(weight) / (height_m ** 2)
         bmi = round(bmi, 2)
 
-        # 2. Lưu vào Database [cite: 2026-01-28]
+        # 2. Lưu vào Database 
         conn = get_connection()
         cursor = conn.cursor()
         sql = """
@@ -41,7 +41,7 @@ def save_body_metrics(member_id, height, weight, note=""):
             conn.close()
 
 def get_metrics_history_detailed(member_id, limit=10):
-    """Lấy lịch sử đo chi tiết với so sánh giữa các lần [cite: 2026-03-04]"""
+    """Lấy lịch sử đo chi tiết với so sánh giữa các lần """
     conn = None
     try:
         conn = get_connection()

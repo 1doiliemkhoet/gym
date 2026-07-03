@@ -24,7 +24,7 @@ else:
     cipher_suite = None
 
 def get_connection():
-    """Kết nối SQLite - Tự động tạo gym.db nếu chưa có [cite: 2026-03-05]"""
+    """Kết nối SQLite - Tự động tạo gym.db nếu chưa có """
     conn = sqlite3.connect(DB_PATH, timeout=30.0)  
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
@@ -33,7 +33,7 @@ def get_connection():
     return conn
 
 def init_db():
-    """Tự động tạo tất cả các bảng lần đầu tiên [cite: 2026-03-05]"""
+    """Tự động tạo tất cả các bảng lần đầu tiên """
     conn = get_connection()
     cursor = conn.cursor()
     
@@ -114,7 +114,7 @@ def init_db():
         conn.close()
 
 def generate_blind_index(data):
-    """Tạo mã băm một chiều để tìm kiếm [cite: 2026-01-28]"""
+    """Tạo mã băm một chiều để tìm kiếm """
     if not data:
         return None
     combined = data + PEPPER
@@ -127,7 +127,7 @@ def encrypt_cccd(plain_text):
     return cipher_suite.encrypt(plain_text.encode()).decode()
 
 def decrypt_cccd(cipher_text):
-    """Giải mã CCCD với cơ chế phòng lỗi kiểu dữ liệu [cite: 2026-01-28]"""
+    """Giải mã CCCD với cơ chế phòng lỗi kiểu dữ liệu"""
     if not isinstance(cipher_text, str) or not cipher_suite:
         return cipher_text
     

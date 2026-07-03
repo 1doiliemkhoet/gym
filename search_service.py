@@ -82,7 +82,7 @@ def update_member_status_logic(member_id, new_status):
         if conn: conn.close()
 
 def delete_member_logic(member_id):
-    """Xóa vĩnh viễn hội viên và các dữ liệu liên quan [cite: 2026-03-05]"""
+    """Xóa vĩnh viễn hội viên và các dữ liệu liên quan """
     from database import get_connection
     conn = get_connection()
     cursor = conn.cursor()
@@ -106,11 +106,18 @@ def get_all_members_summary_logic():
     try:
         conn = get_connection()
         cursor = conn.cursor()
+        
+        # Thêm CASE WHEN vào ORDER BY để đẩy số âm xuống cuối
         sql = """
             SELECT id, ho_ten, so_dien_thoai, ngay_het_han, trang_thai,
                    CAST((julianday(ngay_het_han) - julianday(DATE('now'))) AS INTEGER) AS so_ngay_con_lai
             FROM members 
-            ORDER BY so_ngay_con_lai ASC
+            ORDER BY 
+                CASE 
+                    WHEN CAST((julianday(ngay_het_han) - julianday(DATE('now'))) AS INTEGER) < 0 THEN 1 
+                    ELSE 0 
+                END ASC,
+                so_ngay_con_lai ASC
         """
         cursor.execute(sql)
         return True, cursor.fetchall()
@@ -118,3 +125,26 @@ def get_all_members_summary_logic():
         return False, str(e)
     finally:
         if conn: conn.close()
+
+def update_member_info_logic(member_id, new_name, new_phone, new_expiry):
+    """Cập nhật Tên, SĐT và Ngày hết hạn cho hội viên"""
+    from database import get_connection
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        # Cập nhật trực tiếp vào database
+        cursor.execute("""
+            UPDATE members 
+            SET ho_ten = ?, so_dien_thoai = ?, ngay_het_han = ?
+            WHERE id = ?
+        """, (new_name, new_phone, new_expiry, member_id))
+        
+        conn.commit()
+        return True, "Cập nhật thông tin hội viên thành công!"
+    except Exception as e:
+        return False, f"Lỗi cập nhật: {e}"
+    finally:
+        if conn:
+            conn.close()

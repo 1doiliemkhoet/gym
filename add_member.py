@@ -4,7 +4,7 @@ from database import get_connection, encrypt_cccd, generate_blind_index, log_sys
 from mail_service import send_welcome_email_html 
 
 def save_member_to_db(name, cccd, phone, email, package, gender, dob, price):
-    """Lưu hội viên mới kèm chương trình KHUYẾN MÃI TẶNG THÁNG [cite: 2026-03-12]"""
+    """Lưu hội viên mới kèm chương trình KHUYẾN MÃI TẶNG THÁNG """
     conn = None
     try:
         try:

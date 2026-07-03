@@ -47,7 +47,7 @@ def get_email_footer():
     """
 
 def send_welcome_email_html(receiver_email, member_name, package_name, expire_date):
-    """Gửi thư chào mừng hội viên kèm thông tin QUÀ TẶNG KHUYẾN MÃI [cite: 2026-03-12]"""
+    """Gửi thư chào mừng hội viên kèm thông tin QUÀ TẶNG KHUYẾN MÃI """
     server = None
     try:
         base_months = int(package_name.split()[0])
@@ -124,7 +124,7 @@ def send_welcome_email_html(receiver_email, member_name, package_name, expire_da
         if server: server.quit()
 
 def auto_check_and_send_reminders():
-    """Quét và gửi mail nhắc hạn, đảm bảo không gửi trùng [cite: 2026-01-28]"""
+    """Quét và gửi mail nhắc hạn, đảm bảo không gửi trùng """
     conn = None
     server = None
     try:
@@ -202,7 +202,7 @@ def auto_check_and_send_reminders():
             conn.close()
 
 def send_renewal_email(receiver_email, member_name, months_renewed, new_expire_date):
-    """Gửi mail thông báo gia hạn thành công [cite: 2026-03-04]"""
+    """Gửi mail thông báo gia hạn thành công """
     server = None
     try:
         user_mail = SMTP_USER

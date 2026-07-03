@@ -3,8 +3,9 @@ from datetime import datetime
 from dateutil.relativedelta import relativedelta
 from mail_service import send_renewal_email
 
-def renew_membership_logic(cccd_number, months_to_add):
-    """Gia hạn với bảng giá cố định 1-3-6 tháng [cite: 2026-03-07]"""
+# Sửa lại hàm trong file renew_member.py
+def renew_membership_logic(cccd_number, months_to_add, amount):
+    """Gia hạn với giá tiền nhập thủ công từ giao diện"""
     conn = None
     try:
         cccd_hash = generate_blind_index(cccd_number)
@@ -27,25 +28,23 @@ def renew_membership_logic(cccd_number, months_to_add):
         base_date = max(today, current_expiry)
         new_expiry = base_date + relativedelta(months=months_to_add)
 
-
-        price_mapping = {1: 300000, 3: 900000, 6: 1800000}
-        amount = price_mapping.get(months_to_add, 0)
-
-
+        # Cập nhật ngày hết hạn mới
         cursor.execute("UPDATE members SET ngay_het_han = ?, trang_thai = 'Active' WHERE id = ?", 
                        (new_expiry, member_id))
 
+        # Lưu lịch sử thanh toán với số tiền truyền vào từ giao diện
         cursor.execute(
             "INSERT INTO payments (member_id, amount, content, payment_date) VALUES (?, ?, ?, ?)", 
             (member_id, amount, f"Gia hạn {months_to_add} tháng", today)
         )
 
         conn.commit()
-        log_system_action(f"Gia han {months_to_add} thang cho: {name}", "members", member_id)
+        log_system_action(f"Gia han {months_to_add} thang cho: {name} - So tien: {amount}", "members", member_id)
+        
+        # Gửi mail thông báo (vẫn giữ luồng gửi mail nếu ông không tắt)
         send_renewal_email(email, name, months_to_add, new_expiry.strftime('%d-%m-%Y'))
         
         return True, f"Gia hạn thành công! Hạn mới của {name}: {new_expiry.strftime('%d/%m/%Y')}"
-
     except Exception as e:
         if conn: conn.rollback()
         return False, f"Lỗi: {e}"

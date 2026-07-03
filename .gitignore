@@ -1,15 +1,13 @@
-
-.env
-
-
-gym.db
-*.db
-
-/build/
-/dist/
+# Bỏ qua thư mục đóng gói và file thực thi
+build/
+dist/
+*.spec
 *.exe
-TH_Gym_Manager.exe
 
+# Bỏ qua database chứa thông tin khách hàng thật
+gym.db
+*.sqlite3
 
+# Bỏ qua file chứa mật khẩu, key API (Rất quan trọng cho Cloud Sec)
+.env
 __pycache__/
-*.pyc
