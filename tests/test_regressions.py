@@ -42,7 +42,8 @@ class SecurityRegressionTests(unittest.TestCase):
         fake_connection = _FakeConnection()
         fake_cursor = fake_connection.cursor()
         fake_cursor.fetchall = lambda: []
-        with patch.object(search_service, "get_connection", return_value=fake_connection), \
+        with patch.object(database, "PEPPER", "test-only-pepper"), \
+             patch.object(search_service, "get_connection", return_value=fake_connection), \
              patch.object(search_service, "log_system_action") as log_action:
             result = search_service.search_member_logic("123456789012", search_type="cccd")
         self.assertEqual(result, (True, []))
