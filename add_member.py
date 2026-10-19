@@ -1,5 +1,4 @@
 import math
-import re
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 from database import get_connection, encrypt_cccd, generate_blind_index, log_system_action
@@ -19,7 +18,7 @@ def save_member_to_db(name, cccd, phone, email, package, gender, dob, price):
             return False, "Họ tên không được để trống."
         if not phone:
             return False, "Số điện thoại không được để trống."
-        if email and not re.fullmatch(r"[^@\\s]+@[^@\\s]+\\.[^@\\s]+", email):
+        if email and (email.count("@") != 1 or "." not in email.rsplit("@", 1)[1] or any(ch.isspace() for ch in email)):
             return False, "Email không đúng định dạng."
         months_map = {"1 tháng": 1, "3 tháng": 3, "6 tháng": 6, "12 tháng": 12}
         if package not in months_map:
