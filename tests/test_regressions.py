@@ -89,18 +89,18 @@ class RegistrationRegressionTests(unittest.TestCase):
         fake_cursor.lastrowid = 42
         fake_cursor.fetchone.return_value = None
         fake_connection.cursor.return_value = fake_cursor
-        with patch.object(add_member, "get_connection", return_value=fake_connection), \\
-             patch.object(add_member, "log_system_action") as log_action:
-            success, expiry = add_member.save_member_to_db(
-                "Test Member", "   ", "0900000000", "  ", "1 tháng", "Nam", "01-01-1990", 100
-            )
+        with patch.object(add_member, "get_connection", return_value=fake_connection):
+            with patch.object(add_member, "log_system_action") as log_action:
+                success, expiry = add_member.save_member_to_db(
+                    "Test Member", "   ", "0900000000", "  ", "1 tháng", "Nam", "01-01-1990", 100
+                )
+                log_action.assert_called_once()
         self.assertTrue(success, expiry)
         member_values = fake_cursor.execute.call_args_list[0].args[1]
         self.assertIsNone(member_values[1])  # CCCD
         self.assertIsNone(member_values[2])  # blind index
         self.assertIsNone(member_values[4])  # email
         fake_connection.commit.assert_called_once()
-        log_action.assert_called_once()
 
     def test_negative_or_nonfinite_registration_price_is_rejected(self):
         with patch.object(add_member, "get_connection") as get_connection:
