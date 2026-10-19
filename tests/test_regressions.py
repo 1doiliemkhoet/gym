@@ -1,7 +1,8 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import database
+import add_member
 import body_metrics_service
 import mail_service
 import renew_member
@@ -38,6 +39,18 @@ class SecurityRegressionTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "DB_PEPPER"):
                 database.generate_blind_index("123456789012")
 
+    def test_blank_cccd_is_normalized_to_null(self):
+        with patch.object(database, "PEPPER", None), patch.object(database, "cipher_suite", None):
+            self.assertIsNone(database.generate_blind_index("   "))
+            self.assertIsNone(database.encrypt_cccd("   "))
+
+    def test_blind_index_ignores_surrounding_whitespace(self):
+        with patch.object(database, "PEPPER", "test-only-pepper"):
+            self.assertEqual(
+                database.generate_blind_index(" 123456789012 "),
+                database.generate_blind_index("123456789012"),
+            )
+
     def test_lookup_audit_does_not_include_query_value(self):
         fake_connection = _FakeConnection()
         fake_cursor = fake_connection.cursor()
@@ -59,6 +72,44 @@ class SecurityRegressionTests(unittest.TestCase):
         self.assertIn("YYYY-MM-DD", message)
         get_connection.assert_not_called()
 
+
+class RegistrationRegressionTests(unittest.TestCase):
+    def test_blank_name_is_rejected_before_database_access(self):
+        with patch.object(add_member, "get_connection") as get_connection:
+            success, message = add_member.save_member_to_db(
+                "", "", "0900000000", None, "1 tháng", "Nam", "01-01-1990", 100
+            )
+        self.assertFalse(success)
+        self.assertIn("Họ tên", message)
+        get_connection.assert_not_called()
+
+    def test_blank_cccd_and_email_are_stored_as_nulls(self):
+        fake_connection = Mock()
+        fake_cursor = Mock()
+        fake_cursor.lastrowid = 42
+        fake_cursor.fetchone.return_value = None
+        fake_connection.cursor.return_value = fake_cursor
+        with patch.object(add_member, "get_connection", return_value=fake_connection), \\
+             patch.object(add_member, "log_system_action") as log_action:
+            success, expiry = add_member.save_member_to_db(
+                "Test Member", "   ", "0900000000", "  ", "1 tháng", "Nam", "01-01-1990", 100
+            )
+        self.assertTrue(success, expiry)
+        member_values = fake_cursor.execute.call_args_list[0].args[1]
+        self.assertIsNone(member_values[1])  # CCCD
+        self.assertIsNone(member_values[2])  # blind index
+        self.assertIsNone(member_values[4])  # email
+        fake_connection.commit.assert_called_once()
+        log_action.assert_called_once()
+
+    def test_negative_or_nonfinite_registration_price_is_rejected(self):
+        with patch.object(add_member, "get_connection") as get_connection:
+            success, message = add_member.save_member_to_db(
+                "Test Member", "", "0900000000", None, "1 tháng", "Nam", "01-01-1990", float("inf")
+            )
+        self.assertFalse(success)
+        self.assertIn("hữu hạn và không âm", message)
+        get_connection.assert_not_called()
 
 class DataValidationRegressionTests(unittest.TestCase):
     def test_zero_height_is_rejected_before_database_access(self):
