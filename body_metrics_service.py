@@ -1,3 +1,5 @@
+import math
+
 from database import get_connection
 from datetime import datetime
 
@@ -13,33 +15,39 @@ def calculate_bmi_status(bmi):
         return "Béo phì", "#e74c3c", "Cần giảm cân ngay"
 
 def save_body_metrics(member_id, height, weight, note=""):
-    """Tính BMI và lưu chỉ số mới vào Database [cite: 2026-01-28]"""
+    """Tính BMI và lưu chỉ số mới vào database."""
     conn = None
     try:
-        # 1. Tính toán BMI:
-        height_m = float(height) / 100
-        bmi = float(weight) / (height_m ** 2)
-        bmi = round(bmi, 2)
+        height_cm = float(height)
+        weight_kg = float(weight)
+        if not math.isfinite(height_cm) or not math.isfinite(weight_kg):
+            return False, "Chiều cao và cân nặng phải là số hữu hạn."
+        if height_cm <= 0 or weight_kg <= 0:
+            return False, "Chiều cao và cân nặng phải lớn hơn 0."
 
-        # 2. Lưu vào Database 
+        height_m = height_cm / 100
+        bmi = round(weight_kg / (height_m ** 2), 2)
+
         conn = get_connection()
         cursor = conn.cursor()
         sql = """
             INSERT INTO body_metrics (member_id, chieu_cao, can_nang, bmi, ngay_ghi_nhan, ghi_chu)
             VALUES (?, ?, ?, ?, CURRENT_DATE, ?)
         """
-        cursor.execute(sql, (member_id, height, weight, bmi, note))
+        cursor.execute(sql, (member_id, height_cm, weight_kg, bmi, note))
         conn.commit()
-        
+
         status, _, suggestion = calculate_bmi_status(bmi)
         return True, f"Lưu thành công! BMI: {bmi} ({status}) - {suggestion}"
+    except (TypeError, ValueError):
+        return False, "Chiều cao và cân nặng phải là số hợp lệ."
     except Exception as e:
-        if conn: conn.rollback()
+        if conn:
+            conn.rollback()
         return False, str(e)
     finally:
         if conn:
             conn.close()
-
 def get_metrics_history_detailed(member_id, limit=10):
     """Lấy lịch sử đo chi tiết với so sánh giữa các lần """
     conn = None
@@ -125,5 +133,5 @@ def get_metrics_history(member_id):
         print(f"Lỗi: {e}")
         return []
     finally:
-        if conn and conn.is_connected():
+        if conn:
             conn.close()
