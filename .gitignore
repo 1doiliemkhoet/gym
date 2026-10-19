@@ -6,8 +6,13 @@ dist/
 
 # Bỏ qua database chứa thông tin khách hàng thật
 gym.db
+*.db
+*.db-shm
+*.db-wal
 *.sqlite3
 
 # Bỏ qua file chứa mật khẩu, key API (Rất quan trọng cho Cloud Sec)
 .env
+.env.*
+!.env.example
 __pycache__/
