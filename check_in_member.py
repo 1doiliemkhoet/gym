@@ -23,8 +23,10 @@ def check_in_by_cccd_logic(cccd_input):
         if expiry < today: return False, "Gói tập đã hết hạn!"
 
         cursor.execute("INSERT INTO check_ins (member_id) VALUES (?)", (member['id'],))
-        cursor.execute("INSERT INTO audit_logs (action_text, record_id) VALUES (?, ?)", 
-                       (f"Check-in: {member['ho_ten']}", member['id']))
+        cursor.execute(
+            "INSERT INTO audit_logs (action_text, record_id) VALUES (?, ?)",
+            ("Check-in thành công", member["id"]),
+        )
         
         conn.commit()
         return True, f"Chào mừng {member['ho_ten']}!"
