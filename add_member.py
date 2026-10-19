@@ -69,9 +69,11 @@ def save_member_to_db(name, cccd, phone, email, package, gender, dob, price):
         log_system_action(f"Đăng ký: {name} (Tặng {extra_months} tháng)", "members", member_id)
         
         try:
-            send_welcome_email_html(email, name, package, expire_date_str)
-        except:
-            print("[Lỗi] Không gửi được mail chào mừng nhưng dữ liệu đã lưu thành công.")
+            email_sent = send_welcome_email_html(email, name, package, expire_date_str)
+            if not email_sent:
+                print("[WARN] Đăng ký đã lưu nhưng chưa gửi được email chào mừng.")
+        except Exception as exc:
+            print(f"[WARN] Đăng ký đã lưu nhưng email chào mừng bị lỗi: {exc}")
         
         return True, expire_date_str
 
