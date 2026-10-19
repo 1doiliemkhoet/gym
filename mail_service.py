@@ -1,15 +1,35 @@
 import smtplib
 import os
+import html as html_lib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
-from database import get_connection
+from database import get_connection, BASE_DIR
 
-load_dotenv()
-SMTP_USER = os.getenv("SMTP_USER", "dt01636879200@gmail.com")
+load_dotenv(os.path.join(BASE_DIR, ".env"))
+SMTP_USER = os.getenv("SMTP_USER", "").strip()
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
-if not SMTP_PASSWORD:
-    raise Exception("Thiếu SMTP_PASSWORD trong .env. Vui lòng cấu hình và khởi động lại.")
+
+
+def _smtp_configuration_error():
+    if not SMTP_USER:
+        return "Thiếu SMTP_USER trong .env."
+    if not SMTP_PASSWORD:
+        return "Thiếu SMTP_PASSWORD trong .env."
+    return None
+
+
+def _close_smtp(server):
+    if server is not None:
+        try:
+            server.quit()
+        except Exception:
+            # Kết nối có thể chưa mở hoàn chỉnh; không để lỗi đóng kết nối che mất lỗi gốc.
+            pass
+
+
+def _html_escape(value):
+    return html_lib.escape(str(value if value is not None else ""), quote=True)
 
 GYM_NAME = "TH GYM"
 GYM_ADDRESS = "238 Đường Thương Cát, Phường Thương Cát, Hà Nội"
@@ -50,6 +70,10 @@ def send_welcome_email_html(receiver_email, member_name, package_name, expire_da
     """Gửi thư chào mừng hội viên kèm thông tin QUÀ TẶNG KHUYẾN MÃI """
     server = None
     try:
+        config_error = _smtp_configuration_error()
+        if config_error:
+            print(f"[WARN] {config_error} Khong gui email chao mung.")
+            return False
         base_months = int(package_name.split()[0])
         promo_info = ""
         
@@ -89,18 +113,18 @@ def send_welcome_email_html(receiver_email, member_name, package_name, expire_da
                     </div>
 
                     <div style="padding: 40px; font-family: 'Segoe UI', Arial, sans-serif; color: #333; line-height: 1.6;">
-                        <p style="font-size: 18px;">Chào <strong>{member_name}</strong>,</p>
+                        <p style="font-size: 18px;">Chào <strong>{_html_escape(member_name)}</strong>,</p>
                         <p>Chào mừng gia nhập cộng đồng tập luyện tại <strong>TH Gym</strong>! Thông tin đăng ký của bạn đã được cập nhật thành công.</p>
                         
                         <div style="margin: 30px 0; padding: 20px; background-color: #f8f9fa; border-radius: 8px; border-left: 4px solid #00d4ff;">
                             <table style="width: 100%; border-collapse: collapse;">
                                 <tr>
                                     <td style="padding: 10px 0; color: #666; border-bottom: 1px solid #eee;">Gói tập đã chọn:</td>
-                                    <td style="text-align: right; border-bottom: 1px solid #eee; font-weight: bold;">{package_name}</td>
+                                    <td style="text-align: right; border-bottom: 1px solid #eee; font-weight: bold;">{_html_escape(package_name)}</td>
                                 </tr>
                                 <tr>
                                     <td style="padding: 10px 0; color: #666;">Ngày hết hạn (đã cộng KM):</td>
-                                    <td style="text-align: right; color: #e74c3c; font-weight: bold;">{expire_date}</td>
+                                    <td style="text-align: right; color: #e74c3c; font-weight: bold;">{_html_escape(expire_date)}</td>
                                 </tr>
                             </table>
                             {promo_section}
@@ -121,13 +145,16 @@ def send_welcome_email_html(receiver_email, member_name, package_name, expire_da
         print(f"Lỗi gửi mail: {e}")
         return False
     finally:
-        if server: server.quit()
+        _close_smtp(server)
 
 def auto_check_and_send_reminders():
     """Quét và gửi mail nhắc hạn, đảm bảo không gửi trùng """
     conn = None
     server = None
     try:
+        config_error = _smtp_configuration_error()
+        if config_error:
+            return config_error
         conn = get_connection()
         cursor = conn.cursor()
 
@@ -169,8 +196,8 @@ def auto_check_and_send_reminders():
                             <p style="color: #ffcccb; margin: 5px 0 0 0; font-size: 12px;">Không nên bỏ lỡ cơ hội tập luyện</p>
                         </div>
                         <div style="padding: 40px; color: #333; line-height: 1.6;">
-                            <p style="font-size: 16px;">Chào <strong>{m['ho_ten']}</strong>,</p>
-                            <p>Gói tập <strong style="color: #c0392b;">{m['goi_tap']}</strong> của bạn sẽ hết hạn vào ngày <strong style="color: #c0392b;">{expire_date_str}</strong>.</p>
+                            <p style="font-size: 16px;">Chào <strong>{_html_escape(m['ho_ten'])}</strong>,</p>
+                            <p>Gói tập <strong style="color: #c0392b;">{_html_escape(m['goi_tap'])}</strong> của bạn sẽ hết hạn vào ngày <strong style="color: #c0392b;">{_html_escape(expire_date_str)}</strong>.</p>
                             <p>Hãy ghé qua phòng tập để gia hạn gói tập và tiếp tục hành trình rèn luyện sức khỏe cùng chúng tôi! 💪</p>
                         </div>
                         {get_email_footer()}
@@ -196,8 +223,7 @@ def auto_check_and_send_reminders():
             conn.rollback()
         return f"Lỗi hệ thống mail: {e}"
     finally:
-        if server:
-            server.quit()
+        _close_smtp(server)
         if conn:
             conn.close()
 
@@ -205,6 +231,10 @@ def send_renewal_email(receiver_email, member_name, months_renewed, new_expire_d
     """Gửi mail thông báo gia hạn thành công """
     server = None
     try:
+        config_error = _smtp_configuration_error()
+        if config_error:
+            print(f"[WARN] {config_error} Khong gui email gia han.")
+            return False
         user_mail = SMTP_USER
         pass_mail = SMTP_PASSWORD
 
@@ -229,18 +259,18 @@ def send_renewal_email(receiver_email, member_name, months_renewed, new_expire_d
                     </div>
 
                     <div style="padding: 40px; font-family: 'Segoe UI', Arial, sans-serif; color: #333; line-height: 1.6;">
-                        <p style="font-size: 18px;">Chào <strong>{member_name}</strong>,</p>
+                        <p style="font-size: 18px;">Chào <strong>{_html_escape(member_name)}</strong>,</p>
                         <p>Cảm ơn bạn đã gia hạn gói tập tại <strong>TH Gym</strong>! Tài khoản của bạn đã được cập nhật thành công.</p>
                         
                         <div style="margin: 30px 0; padding: 20px; background-color: #f8f9fa; border-radius: 8px; border-left: 4px solid #27ae60;">
                             <table style="width: 100%; border-collapse: collapse;">
                                 <tr>
                                     <td style="padding: 12px 0; color: #666; font-weight: bold;">Thời hạn gia hạn:</td>
-                                    <td style="text-align: right; color: #27ae60; font-weight: bold;">{months_renewed} tháng</td>
+                                    <td style="text-align: right; color: #27ae60; font-weight: bold;">{_html_escape(months_renewed)} tháng</td>
                                 </tr>
                                 <tr style="border-top: 1px solid #eee;">
                                     <td style="padding: 12px 0; color: #666; font-weight: bold;">Ngày hết hạn mới:</td>
-                                    <td style="text-align: right; color: #e74c3c; font-weight: bold; font-size: 16px;">{new_expire_date}</td>
+                                    <td style="text-align: right; color: #e74c3c; font-weight: bold; font-size: 16px;">{_html_escape(new_expire_date)}</td>
                                 </tr>
                             </table>
                         </div>
@@ -266,4 +296,4 @@ def send_renewal_email(receiver_email, member_name, months_renewed, new_expire_d
         print(f"❌ Lỗi gửi mail gia hạn: {e}")
         return False
     finally:
-        if server: server.quit()
+        _close_smtp(server)
