@@ -311,6 +311,11 @@ class GymManagementApp(ctk.CTk):
         entry.pack(fill="x")
         return entry
 
+    def _widget_matches_entry(self, widget, attribute_name):
+        """CTkEntry phát sự kiện từ Entry Tk nội bộ, không phải wrapper CTkEntry."""
+        entry = getattr(self, attribute_name, None)
+        return entry is not None and widget in (entry, getattr(entry, "_entry", None))
+
     def _bind_suggestion_keys(self, widget):
         """Cho phép chọn gợi ý bằng bàn phím trên mọi ô tìm hội viên."""
         widget.bind("<Down>", self.focus_checkin_suggestion)
@@ -331,13 +336,13 @@ class GymManagementApp(ctk.CTk):
         """Enter chọn gợi ý đang mở; nếu không có gợi ý thì thực hiện hành động của màn hình."""
         if self.checkin_listbox and self._suggestion_target_entry is event.widget:
             return self.commit_checkin_suggestion()
-        if event.widget is getattr(self, "entry_cccd_check", None):
+        if self._widget_matches_entry(event.widget, "entry_cccd_check"):
             self.handle_checkin()
-        elif event.widget is getattr(self, "entry_search", None):
+        elif self._widget_matches_entry(event.widget, "entry_search"):
             self.handle_search()
-        elif event.widget is getattr(self, "entry_cccd_renew", None):
+        elif self._widget_matches_entry(event.widget, "entry_cccd_renew"):
             self.entry_renew_price.focus_set()
-        elif event.widget is getattr(self, "entry_member_search", None):
+        elif self._widget_matches_entry(event.widget, "entry_member_search"):
             self.entry_h.focus_set()
         return "break"
 
@@ -469,7 +474,7 @@ class GymManagementApp(ctk.CTk):
 
         self.current_suggestions_data = get_checkin_suggestions(typed)
         self.selected_cccd = None  # Reset khi gõ mới
-        if widget is getattr(self, "entry_member_search", None):
+        if self._widget_matches_entry(widget, "entry_member_search"):
             self.quick_metrics_member_id = None
 
         if not self.current_suggestions_data:
