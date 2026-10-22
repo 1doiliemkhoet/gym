@@ -1,86 +1,107 @@
+import math
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 from database import get_connection, encrypt_cccd, generate_blind_index, log_system_action
 from mail_service import send_welcome_email_html 
 
 def save_member_to_db(name, cccd, phone, email, package, gender, dob, price):
-    """Lưu hội viên mới kèm chương trình KHUYẾN MÃI TẶNG THÁNG """
+    """Lưu hội viên mới sau khi chuẩn hóa và xác thực dữ liệu."""
     conn = None
     try:
+        name = str(name or "").strip()
+        cccd = str(cccd or "").strip()
+        phone = str(phone or "").strip()
+        email = str(email or "").strip().lower() or None
+        package = str(package or "").strip()
+
+        if not name:
+            return False, "Họ tên không được để trống."
+        if not phone:
+            return False, "Số điện thoại không được để trống."
+        if email and (email.count("@") != 1 or "." not in email.rsplit("@", 1)[1] or any(ch.isspace() for ch in email)):
+            return False, "Email không đúng định dạng."
+        months_map = {"1 tháng": 1, "3 tháng": 3, "6 tháng": 6, "12 tháng": 12}
+        if package not in months_map:
+            return False, "Gói tập không hợp lệ."
+
         try:
-            dob_dt = datetime.strptime(dob, "%d-%m-%Y").date()
-        except ValueError:
+            dob_dt = datetime.strptime(str(dob).strip(), "%d-%m-%Y").date()
+        except (TypeError, ValueError):
             return False, "[ERROR] Ngày sinh phải nhập theo dạng DD-MM-YYYY"
+        if dob_dt > datetime.now().date():
+            return False, "Ngày sinh không thể nằm trong tương lai."
+
+        try:
+            price_value = float(price)
+        except (TypeError, ValueError, OverflowError):
+            return False, "Giá tiền phải là số hợp lệ."
+        if not math.isfinite(price_value) or price_value < 0:
+            return False, "Giá tiền phải là số hữu hạn và không âm."
 
         start_date = datetime.now().date()
-        
-
-        months_map = {"1 tháng": 1, "3 tháng": 3, "6 tháng": 6, "12 tháng": 12}
-        base_months = months_map.get(package, 1)
-        
+        base_months = months_map[package]
         extra_months = 0
         payment_content = f"Đăng ký mới gói {package}"
-
         if base_months == 3:
-            extra_months = 1  # Tặng 1 tháng
+            extra_months = 1
         elif base_months == 6:
-            extra_months = 1  # Tặng 1 tháng
-            payment_content += " + 🎁 TẶNG COMBO ĐI TẬP" 
+            extra_months = 1
+            payment_content += " + 🎁 TẶNG COMBO ĐI TẬP"
         elif base_months == 12:
-            extra_months = 2  # Tặng 2 tháng
-        
+            extra_months = 2
+
         total_months = base_months + extra_months
-
         end_date = start_date + relativedelta(months=total_months)
-        expire_date_str = end_date.strftime('%d-%m-%Y')
+        expire_date_str = end_date.strftime("%d-%m-%Y")
 
-
-        cccd_hash = generate_blind_index(cccd) 
-        encrypted_cccd = encrypt_cccd(cccd) 
-
+        cccd_hash = generate_blind_index(cccd)
+        encrypted_cccd = encrypt_cccd(cccd)
         conn = get_connection()
         cursor = conn.cursor()
 
-        cursor.execute("SELECT id FROM members WHERE cccd_hash = ?", (cccd_hash,))
-        if cursor.fetchone():
-            return False, "[ERROR] Số CCCD này đã được đăng ký rồi!"
-        
-        cursor.execute("SELECT id FROM members WHERE email = ?", (email,))
-        if cursor.fetchone():
-            return False, "[ERROR] Email này đã được đăng ký rồi!"
+        if cccd_hash:
+            cursor.execute("SELECT id FROM members WHERE cccd_hash = ?", (cccd_hash,))
+            if cursor.fetchone():
+                return False, "[ERROR] Số CCCD này đã được đăng ký rồi!"
+
+        if email:
+            cursor.execute("SELECT id FROM members WHERE email = ?", (email,))
+            if cursor.fetchone():
+                return False, "[ERROR] Email này đã được đăng ký rồi!"
 
         sql_member = """
-            INSERT INTO members 
-            (ho_ten, cccd, cccd_hash, so_dien_thoai, email, gioi_tinh, ngay_sinh, goi_tap, ngay_dang_ky, ngay_het_han, trang_thai) 
+            INSERT INTO members
+            (ho_ten, cccd, cccd_hash, so_dien_thoai, email, gioi_tinh, ngay_sinh, goi_tap, ngay_dang_ky, ngay_het_han, trang_thai)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Active')
         """
-        val_member = (name, encrypted_cccd, cccd_hash, phone, email, gender, dob_dt, package, start_date, end_date)
-        
-        cursor.execute(sql_member, val_member)
+        values = (name, encrypted_cccd, cccd_hash, phone, email, gender, dob_dt, package, start_date, end_date)
+        cursor.execute(sql_member, values)
         member_id = cursor.lastrowid
 
         cursor.execute("""
-            INSERT INTO payments (member_id, amount, content, payment_date) 
+            INSERT INTO payments (member_id, amount, content, payment_date)
             VALUES (?, ?, ?, datetime('now', 'localtime'))
-        """, (member_id, price, payment_content))
-        
+        """, (member_id, price_value, payment_content))
         conn.commit()
 
-        log_system_action(f"Đăng ký: {name} (Tặng {extra_months} tháng)", "members", member_id)
-        
-        try:
-            send_welcome_email_html(email, name, package, expire_date_str)
-        except:
-            print("[Lỗi] Không gửi được mail chào mừng nhưng dữ liệu đã lưu thành công.")
-        
-        return True, expire_date_str
+        # Audit log không chứa tên hoặc CCCD; record_id liên kết đến hồ sơ.
+        log_system_action(f"Đăng ký hội viên (tặng {extra_months} tháng)", "members", member_id)
+        if email:
+            try:
+                email_sent = send_welcome_email_html(email, name, package, expire_date_str)
+                if not email_sent:
+                    print("[WARN] Đăng ký đã lưu nhưng chưa gửi được email chào mừng.")
+            except Exception as exc:
+                print(f"[WARN] Đăng ký đã lưu nhưng email chào mừng bị lỗi: {exc}")
 
+        return True, expire_date_str
     except Exception as e:
-        if conn: conn.rollback()
+        if conn:
+            conn.rollback()
         return False, f"[ERROR] Hệ thống: {str(e)}"
     finally:
-        if conn: conn.close()
-
+        if conn:
+            conn.close()
 def check_cccd_match(cccd, gender, dob):
     """Bóc tách và đối chiếu CCCD với Giới tính và Năm sinh"""
     cccd = cccd.strip()

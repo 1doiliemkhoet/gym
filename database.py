@@ -5,23 +5,28 @@ from dotenv import load_dotenv
 import hashlib
 import sys
 
-load_dotenv()
 if getattr(sys, 'frozen', False):
     BASE_DIR = os.path.dirname(sys.executable)
 else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 DB_PATH = os.path.join(BASE_DIR, "gym.db")
+# Nạp cấu hình cạnh file database/script, kể cả khi mở EXE từ shortcut khác thư mục.
+load_dotenv(os.path.join(BASE_DIR, ".env"))
 
-PEPPER = os.getenv("DB_PEPPER", "th_gym_secret_2026")
+# Không dùng pepper hard-code. Với database cũ, phải giữ DB_PEPPER đã dùng để tạo index
+# cho tới khi có quy trình re-index dữ liệu và thay pepper an toàn.
+PEPPER = os.getenv("DB_PEPPER")
 ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
 
+cipher_suite = None
 if ENCRYPTION_KEY:
-    cipher_suite = Fernet(ENCRYPTION_KEY.encode())
+    try:
+        cipher_suite = Fernet(ENCRYPTION_KEY.encode())
+    except (TypeError, ValueError):
+        print("[ERROR] ENCRYPTION_KEY khong hop le; tu choi ma hoa CCCD.")
 else:
-    print("[WARNING] Chua cau hinh ENCRYPTION_KEY trong file .env!")
-    print("   Cac ham ma hoa se khong hoat dong. Vui long them ENCRYPTION_KEY vao .env")
-    cipher_suite = None
+    print("[WARNING] Chua cau hinh ENCRYPTION_KEY trong .env.")
 
 def get_connection():
     """Kết nối SQLite - Tự động tạo gym.db nếu chưa có """
@@ -114,17 +119,31 @@ def init_db():
         conn.close()
 
 def generate_blind_index(data):
-    """Tạo mã băm một chiều để tìm kiếm """
-    if not data:
+    """Tạo mã băm tìm kiếm từ CCCD đã chuẩn hóa."""
+    if data is None:
         return None
-    combined = data + PEPPER
+    if not isinstance(data, str):
+        raise TypeError("Du lieu tao chi muc CCCD phai la chuoi.")
+    normalized = data.strip()
+    if not normalized:
+        return None
+    if not PEPPER:
+        raise RuntimeError("Thieu DB_PEPPER trong .env; tu choi tao chi muc CCCD.")
+    combined = normalized + PEPPER
     return hashlib.sha256(combined.encode()).hexdigest()
 
 def encrypt_cccd(plain_text):
-    """Mã hóa CCCD (lưu trữ an toàn)"""
-    if not plain_text or not cipher_suite:
-        return plain_text
-    return cipher_suite.encrypt(plain_text.encode()).decode()
+    """Mã hóa CCCD; tuyệt đối không lưu plaintext khi thiếu khóa."""
+    if plain_text is None:
+        return None
+    if not isinstance(plain_text, str):
+        raise TypeError("CCCD phai la chuoi.")
+    normalized = plain_text.strip()
+    if not normalized:
+        return None
+    if not cipher_suite:
+        raise RuntimeError("ENCRYPTION_KEY chua duoc cau hinh hop le; tu choi luu CCCD dang plaintext.")
+    return cipher_suite.encrypt(normalized.encode()).decode()
 
 def decrypt_cccd(cipher_text):
     """Giải mã CCCD với cơ chế phòng lỗi kiểu dữ liệu"""
@@ -160,7 +179,6 @@ def log_system_action(action_text, table_affected=None, record_id=None):
         if conn:
             conn.close()
 
-# Tự động khởi tạo database khi module được import
-if not os.path.exists(DB_PATH):
-    print(f"[+] Tao database moi: {DB_PATH}")
-    init_db()
+# CREATE TABLE/INDEX IF NOT EXISTS giúp bổ sung bảng còn thiếu cho database cũ.
+# Không thay đổi dữ liệu hiện có; thay đổi cột/khóa cần migration riêng.
+init_db()

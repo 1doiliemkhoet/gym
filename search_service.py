@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from database import get_connection, generate_blind_index, decrypt_cccd, log_system_action
 
 def search_member_logic(query, search_type="name"):
@@ -52,7 +54,9 @@ def search_member_logic(query, search_type="name"):
             
             final_results.append(m)
         
-        log_system_action(f"Truy xuat toan bo ho so: {clean_query}", "multiple_tables", None)
+        # Không ghi query thô vào audit log: query có thể chứa CCCD hoặc dữ liệu cá nhân.
+        query_kind = "name" if search_type == "name" else "cccd"
+        log_system_action(f"Truy xuat ho so (loai tim kiem: {query_kind})", "members", None)
         return True, final_results
 
     except Exception as e:
@@ -127,23 +131,38 @@ def get_all_members_summary_logic():
         if conn: conn.close()
 
 def update_member_info_logic(member_id, new_name, new_phone, new_expiry):
-    """Cập nhật Tên, SĐT và Ngày hết hạn cho hội viên"""
-    from database import get_connection
+    """Cập nhật tên, số điện thoại và ngày hết hạn của hội viên."""
+    if not str(new_name or "").strip():
+        return False, "Họ tên không được để trống."
+    if not str(new_phone or "").strip():
+        return False, "Số điện thoại không được để trống."
+
+    try:
+        expiry_date = datetime.strptime(str(new_expiry).strip(), "%Y-%m-%d").date()
+        expiry_iso = expiry_date.isoformat()
+    except (TypeError, ValueError):
+        return False, "Ngày hết hạn không hợp lệ. Nhập theo định dạng YYYY-MM-DD."
+
     conn = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
-        
-        # Cập nhật trực tiếp vào database
         cursor.execute("""
-            UPDATE members 
+            UPDATE members
             SET ho_ten = ?, so_dien_thoai = ?, ngay_het_han = ?
             WHERE id = ?
-        """, (new_name, new_phone, new_expiry, member_id))
-        
+        """, (str(new_name).strip(), str(new_phone).strip(), expiry_iso, member_id))
+
+        if cursor.rowcount == 0:
+            conn.rollback()
+            return False, "Không tìm thấy hội viên cần cập nhật."
+
         conn.commit()
+        log_system_action("Cap nhat ho so hoi vien", "members", member_id)
         return True, "Cập nhật thông tin hội viên thành công!"
     except Exception as e:
+        if conn:
+            conn.rollback()
         return False, f"Lỗi cập nhật: {e}"
     finally:
         if conn:

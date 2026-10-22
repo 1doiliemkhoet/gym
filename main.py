@@ -1528,7 +1528,7 @@ class GymManagementApp(ctk.CTk):
                     font=ctk.CTkFont(family="Inter", size=12, weight="bold"),
                 ).pack(side="left", padx=12, pady=9)
 
-                status_val = m.get("trang_thai", "Active")
+                status_val = m["trang_thai"] if "trang_thai" in m.keys() else "Active"
                 st_color = (
                     COLORS["success"]
                     if status_val == "Active"
