@@ -319,6 +319,7 @@ class GymManagementApp(ctk.CTk):
     def _bind_suggestion_keys(self, widget):
         """Cho phép chọn gợi ý bằng bàn phím trên mọi ô tìm hội viên."""
         widget.bind("<Down>", self.focus_checkin_suggestion)
+        widget.bind("<Up>", self.focus_checkin_suggestion_up)
         widget.bind("<Return>", self.handle_suggestion_entry_return)
 
     def focus_checkin_suggestion(self, event):
@@ -328,6 +329,19 @@ class GymManagementApp(ctk.CTk):
                 self.checkin_listbox.selection_set(0)
                 self.checkin_listbox.activate(0)
                 self.checkin_listbox.see(0)
+            self.checkin_listbox.focus_set()
+            return "break"
+        return None
+
+    def focus_checkin_suggestion_up(self, event):
+        """Mũi tên lên từ ô nhập focus vào gợi ý cuối cùng."""
+        if self.checkin_listbox and self._suggestion_target_entry is event.widget:
+            if self.current_suggestions_data:
+                last_index = len(self.current_suggestions_data) - 1
+                self.checkin_listbox.selection_clear(0, tk.END)
+                self.checkin_listbox.selection_set(last_index)
+                self.checkin_listbox.activate(last_index)
+                self.checkin_listbox.see(last_index)
             self.checkin_listbox.focus_set()
             return "break"
         return None
@@ -1779,7 +1793,7 @@ class GymManagementApp(ctk.CTk):
             days_left = member.get("so_ngay_con_lai")
             status = member.get("trang_thai", "Active")
             if chosen_filter == "Đang tập":
-                if not (status == "Active" and days_left is not None and days_left > 7):
+                if not (status == "Active" and days_left is not None and days_left >= 0):
                     continue
             elif chosen_filter == "Sắp hết hạn":
                 if not (status == "Active" and days_left is not None and 0 <= days_left <= 7):
