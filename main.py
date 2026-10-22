@@ -3,6 +3,11 @@ import sys
 import threading
 import tkinter as tk
 from tkinter import messagebox
+try:
+    import winsound
+except ImportError:  # Cho phép import ứng dụng trên nền tảng không có winsound
+    winsound = None
+
 import customtkinter as ctk
 
 from add_member import save_member_to_db, check_cccd_match
@@ -61,6 +66,22 @@ COLORS = {
     "muted": "#64748B",        # Chữ mờ
 }
 
+# Mức mặc định được suy ra từ ví dụ hiện có trên giao diện (500.000đ đăng ký,
+# 450.000đ gia hạn cho 1 tháng). Hãy chỉnh các mức này theo bảng giá thực tế của phòng gym.
+# Người dùng vẫn có thể sửa trực tiếp số tiền trước khi lưu giao dịch.
+REGISTRATION_PACKAGE_PRICES = {
+    "1 tháng": 500_000,
+    "3 tháng": 1_500_000,
+    "6 tháng": 3_000_000,
+    "12 tháng": 6_000_000,
+}
+RENEWAL_PACKAGE_PRICES = {
+    "1 tháng": 450_000,
+    "3 tháng": 1_350_000,
+    "6 tháng": 2_700_000,
+    "12 tháng": 5_400_000,
+}
+
 ctk.set_appearance_mode("dark")
 
 
@@ -70,6 +91,12 @@ class GymManagementApp(ctk.CTk):
         self.selected_cccd = None
         self.checkin_listbox = None
         self.current_suggestions_data = []
+        self._suggestion_target_entry = None
+        self._toast_frame = None
+        self._toast_after_id = None
+        self.quick_metrics_member_id = None
+        self.member_list_members = []
+        self.member_list_load_error = None
         self.nav_buttons = {}
         self.active_nav_key = None
 
@@ -284,6 +311,153 @@ class GymManagementApp(ctk.CTk):
         entry.pack(fill="x")
         return entry
 
+    def _bind_suggestion_keys(self, widget):
+        """Cho phép chọn gợi ý bằng bàn phím trên mọi ô tìm hội viên."""
+        widget.bind("<Down>", self.focus_checkin_suggestion)
+        widget.bind("<Return>", self.handle_suggestion_entry_return)
+
+    def focus_checkin_suggestion(self, event):
+        """Chuyển focus vào listbox gợi ý khi người dùng nhấn mũi tên xuống."""
+        if self.checkin_listbox and self._suggestion_target_entry is event.widget:
+            if not self.checkin_listbox.curselection() and self.current_suggestions_data:
+                self.checkin_listbox.selection_set(0)
+                self.checkin_listbox.activate(0)
+                self.checkin_listbox.see(0)
+            self.checkin_listbox.focus_set()
+            return "break"
+        return None
+
+    def handle_suggestion_entry_return(self, event):
+        """Enter chọn gợi ý đang mở; nếu không có gợi ý thì thực hiện hành động của màn hình."""
+        if self.checkin_listbox and self._suggestion_target_entry is event.widget:
+            return self.commit_checkin_suggestion()
+        if event.widget is getattr(self, "entry_cccd_check", None):
+            self.handle_checkin()
+        elif event.widget is getattr(self, "entry_search", None):
+            self.handle_search()
+        elif event.widget is getattr(self, "entry_cccd_renew", None):
+            self.entry_renew_price.focus_set()
+        elif event.widget is getattr(self, "entry_member_search", None):
+            self.entry_h.focus_set()
+        return "break"
+
+    def commit_checkin_suggestion(self, event=None):
+        """Chốt mục đang chọn; nếu chưa chọn thì dùng mục đầu tiên."""
+        if not self.checkin_listbox or not self.current_suggestions_data:
+            return "break"
+        selection = self.checkin_listbox.curselection()
+        if selection:
+            index = selection[0]
+        else:
+            try:
+                index = int(self.checkin_listbox.index(tk.ACTIVE))
+            except (tk.TclError, ValueError):
+                index = 0
+            if index < 0 or index >= len(self.current_suggestions_data):
+                index = 0
+            self.checkin_listbox.selection_set(index)
+        target_entry = self._suggestion_target_entry
+        if target_entry is not None:
+            self.select_checkin_suggestion(target_entry)
+        return "break"
+
+    def dismiss_checkin_suggestions(self, event=None):
+        target_entry = self._suggestion_target_entry
+        self.hide_checkin_suggestions()
+        if target_entry is not None and target_entry.winfo_exists():
+            target_entry.focus_set()
+        return "break"
+
+    def _bind_currency_format(self, entry):
+        entry.bind("<KeyRelease>", lambda event: self.format_currency_entry(event.widget), add="+")
+        entry.bind("<FocusOut>", lambda event: self.format_currency_entry(event.widget), add="+")
+
+    def format_currency_entry(self, widget):
+        """Format số tiền bằng dấu phẩy và giữ vị trí con trỏ tương đối theo chữ số."""
+        raw = widget.get()
+        try:
+            cursor = widget.index(tk.INSERT)
+        except Exception:
+            cursor = len(raw)
+        digits_before_cursor = sum(char.isdigit() for char in raw[:cursor])
+        digits = "".join(char for char in raw if char.isdigit())
+        formatted = f"{int(digits):,}" if digits else ""
+        if formatted == raw:
+            return
+        widget.delete(0, tk.END)
+        if formatted:
+            widget.insert(0, formatted)
+        cursor_target = 0
+        digits_seen = 0
+        while cursor_target < len(formatted) and digits_seen < digits_before_cursor:
+            if formatted[cursor_target].isdigit():
+                digits_seen += 1
+            cursor_target += 1
+        widget.icursor(cursor_target)
+
+    def _set_currency_entry(self, widget, amount):
+        widget.delete(0, tk.END)
+        widget.insert(0, f"{int(amount):,}")
+
+    def update_registration_price(self, package):
+        if hasattr(self, "entry_price") and self.entry_price.winfo_exists():
+            amount = REGISTRATION_PACKAGE_PRICES.get(package)
+            if amount is not None:
+                self._set_currency_entry(self.entry_price, amount)
+
+    def update_renewal_price(self, package):
+        if hasattr(self, "entry_renew_price") and self.entry_renew_price.winfo_exists():
+            amount = RENEWAL_PACKAGE_PRICES.get(package)
+            if amount is not None:
+                self._set_currency_entry(self.entry_renew_price, amount)
+
+    def show_toast(self, message, success=True, beep=False):
+        """Banner không chặn luồng thao tác, tự đóng sau 2,5 giây."""
+        if self._toast_after_id is not None:
+            try:
+                self.after_cancel(self._toast_after_id)
+            except Exception:
+                pass
+            self._toast_after_id = None
+        if self._toast_frame is not None:
+            try:
+                self._toast_frame.destroy()
+            except Exception:
+                pass
+            self._toast_frame = None
+
+        background = COLORS["success"] if success else COLORS["danger"]
+        icon = "✓" if success else "!"
+        toast = ctk.CTkFrame(self, fg_color=background, corner_radius=10)
+        ctk.CTkLabel(
+            toast,
+            text=f"{icon}  {message}",
+            text_color="#FFFFFF",
+            font=ctk.CTkFont(family="Inter", size=13, weight="bold"),
+            wraplength=430,
+            justify="left",
+        ).pack(padx=18, pady=12)
+        toast.place(relx=0.985, y=18, anchor="ne")
+        toast.lift()
+        self._toast_frame = toast
+
+        if beep and winsound is not None:
+            try:
+                sound_type = getattr(winsound, "MB_OK", 0) if success else getattr(winsound, "MB_ICONHAND", 0x10)
+                winsound.MessageBeep(sound_type)
+            except Exception:
+                pass
+        self._toast_after_id = self.after(2500, self._dismiss_toast)
+
+    def _dismiss_toast(self):
+        if self._toast_frame is not None:
+            try:
+                self._toast_frame.destroy()
+            except Exception:
+                pass
+        self._toast_frame = None
+        self._toast_after_id = None
+
     def _on_global_click(self, event):
         if self.checkin_listbox and event.widget != self.checkin_listbox:
             self.hide_checkin_suggestions()
@@ -295,12 +469,15 @@ class GymManagementApp(ctk.CTk):
 
         self.current_suggestions_data = get_checkin_suggestions(typed)
         self.selected_cccd = None  # Reset khi gõ mới
+        if widget is getattr(self, "entry_member_search", None):
+            self.quick_metrics_member_id = None
 
         if not self.current_suggestions_data:
             self.hide_checkin_suggestions()
             return
 
         self.hide_checkin_suggestions()
+        self._suggestion_target_entry = widget
         self.checkin_listbox = tk.Listbox(
             self,
             font=("Inter", 11),
@@ -328,8 +505,11 @@ class GymManagementApp(ctk.CTk):
         )
         self.checkin_listbox.lift()
         self.checkin_listbox.bind(
-            "<<ListboxSelect>>", lambda e: self.select_checkin_suggestion(widget)
+            "<ButtonRelease-1>",
+            lambda e, target=widget: self.after_idle(lambda: self.select_checkin_suggestion(target)),
         )
+        self.checkin_listbox.bind("<Return>", self.commit_checkin_suggestion)
+        self.checkin_listbox.bind("<Escape>", self.dismiss_checkin_suggestions)
 
     def select_checkin_suggestion(self, target_entry):
         """Tách tên chuẩn xác sau khi thay đổi định dạng hiển thị"""
@@ -371,6 +551,7 @@ class GymManagementApp(ctk.CTk):
             except Exception:
                 pass
             self.checkin_listbox = None
+        self._suggestion_target_entry = None
 
     # ================= 1. MÀN HÌNH ĐĂNG KÝ HỘI VIÊN =================
 
@@ -456,11 +637,14 @@ class GymManagementApp(ctk.CTk):
             border_color=COLORS["border"],
             button_color=COLORS["border"],
             dropdown_fg_color=COLORS["card_inner"],
+            command=self.update_registration_price,
         ).pack(fill="x")
 
         self.entry_price = self._create_labeled_field(
             form_grid, 3, 1, "💰 Giá tiền thanh toán (VNĐ) *", "Ví dụ: 500000"
         )
+        self._bind_currency_format(self.entry_price)
+        self.update_registration_price(self.package_var.get())
 
         # Nút xác nhận
         action_bar = ctk.CTkFrame(card, fg_color="transparent")
@@ -499,7 +683,7 @@ class GymManagementApp(ctk.CTk):
                 return
 
         try:
-            price = float(price_str)
+            price = float(price_str.replace(",", "").strip())
             success, msg = save_member_to_db(
                 name, cccd, phone, email, package, gender, dob, price
             )
@@ -546,7 +730,7 @@ class GymManagementApp(ctk.CTk):
         )
         self.entry_cccd_check.pack(side="left", fill="x", expand=True, padx=(0, 12))
         self.entry_cccd_check.bind("<KeyRelease>", self.on_checkin_typing)
-        self.entry_cccd_check.bind("<Return>", lambda e: self.handle_checkin())
+        self._bind_suggestion_keys(self.entry_cccd_check)
 
         ctk.CTkButton(
             search_row,
@@ -599,12 +783,11 @@ class GymManagementApp(ctk.CTk):
         threading.Thread(target=task, daemon=True).start()
 
     def finish_checkin(self, success, msg):
+        self.show_toast(msg, success=success, beep=True)
         if success:
-            messagebox.showinfo("Thành công", msg)
             self.entry_cccd_check.delete(0, "end")
+            self.entry_cccd_check.focus_set()
             self.refresh_checkin_history()
-        else:
-            messagebox.showerror("Lỗi", msg)
 
     def refresh_checkin_history(self):
         for widget in self.history_frame.winfo_children():
@@ -716,6 +899,7 @@ class GymManagementApp(ctk.CTk):
         )
         self.entry_cccd_renew.pack(fill="x", pady=(0, 16))
         self.entry_cccd_renew.bind("<KeyRelease>", self.on_checkin_typing)
+        self._bind_suggestion_keys(self.entry_cccd_renew)
 
         row_split = ctk.CTkFrame(inner, fg_color="transparent")
         row_split.pack(fill="x", pady=(0, 20))
@@ -741,6 +925,7 @@ class GymManagementApp(ctk.CTk):
             border_color=COLORS["border"],
             button_color=COLORS["border"],
             dropdown_fg_color=COLORS["card_inner"],
+            command=self.update_renewal_price,
         ).pack(fill="x")
 
         # Cột phải: Số tiền
@@ -762,6 +947,8 @@ class GymManagementApp(ctk.CTk):
             font=ctk.CTkFont(family="Inter", size=13),
         )
         self.entry_renew_price.pack(fill="x")
+        self._bind_currency_format(self.entry_renew_price)
+        self.update_renewal_price(self.renew_month_var.get())
 
         ctk.CTkButton(
             inner,
@@ -792,7 +979,7 @@ class GymManagementApp(ctk.CTk):
         def task():
             try:
                 months = int(self.renew_month_var.get().split()[0])
-                amount = float(price_str)
+                amount = float(price_str.replace(",", "").strip())
 
                 success, msg = renew_membership_logic(cccd, months, amount)
 
@@ -805,7 +992,7 @@ class GymManagementApp(ctk.CTk):
                 self.after(
                     0,
                     lambda: messagebox.showerror(
-                        "Lỗi", "Giá tiền phải là số thuần túy (không dấu chấm/phẩy)!"
+                        "Lỗi", "Số tiền không hợp lệ. Chỉ nhập chữ số; dấu phẩy phân tách hàng nghìn được hỗ trợ."
                     ),
                 )
             except Exception as e:
@@ -846,7 +1033,7 @@ class GymManagementApp(ctk.CTk):
         )
         self.entry_search.pack(side="left", fill="x", expand=True, padx=(0, 12))
         self.entry_search.bind("<KeyRelease>", self.on_checkin_typing)
-        self.entry_search.bind("<Return>", lambda e: self.handle_search())
+        self._bind_suggestion_keys(self.entry_search)
 
         ctk.CTkButton(
             bar,
@@ -969,6 +1156,32 @@ class GymManagementApp(ctk.CTk):
         )
         status_cb.pack(side="right", padx=6)
 
+        quick_actions = ctk.CTkFrame(self.detail_container, fg_color="transparent")
+        quick_actions.pack(fill="x", pady=(0, 10))
+        ctk.CTkButton(
+            quick_actions,
+            text="💳 GIA HẠN NHANH",
+            width=155,
+            height=38,
+            corner_radius=9,
+            fg_color=COLORS["warning"],
+            hover_color=COLORS["warning_hover"],
+            text_color="#000000",
+            font=ctk.CTkFont(family="Inter", size=12, weight="bold"),
+            command=lambda data=member_data: self.quick_renew_member(data),
+        ).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(
+            quick_actions,
+            text="⚖️ ĐO BMI",
+            width=125,
+            height=38,
+            corner_radius=9,
+            fg_color=COLORS["info"],
+            hover_color=COLORS["info_hover"],
+            font=ctk.CTkFont(family="Inter", size=12, weight="bold"),
+            command=lambda data=member_data: self.quick_measure_bmi(data),
+        ).pack(side="left")
+
         # Tabview chi tiết
         tabview = ctk.CTkTabview(
             self.detail_container,
@@ -1055,6 +1268,27 @@ class GymManagementApp(ctk.CTk):
                 font=ctk.CTkFont(family="Inter", size=13),
                 text_color=COLORS["success"],
             ).pack(side="left", padx=14, pady=8)
+
+    def quick_renew_member(self, member_data):
+        """Mở màn gia hạn và điền sẵn CCCD của hội viên đang xem."""
+        cccd = str(member_data.get("cccd") or "").strip()
+        if not cccd or cccd == "N/A":
+            messagebox.showwarning("Thiếu CCCD", "Hồ sơ này chưa có CCCD để tự điền gia hạn.")
+            return
+        self.navigate("renew", self.show_renew)
+        self.entry_cccd_renew.delete(0, tk.END)
+        self.entry_cccd_renew.insert(0, cccd)
+        self.selected_cccd = cccd
+        self.entry_renew_price.focus_set()
+
+    def quick_measure_bmi(self, member_data):
+        """Mở màn BMI, chọn sẵn đúng member_id để tránh trùng tên."""
+        self.navigate("metrics", self.show_metrics_screen)
+        self.entry_member_search.delete(0, tk.END)
+        self.entry_member_search.insert(0, member_data.get("ho_ten", ""))
+        self.quick_metrics_member_id = member_data.get("id")
+        self.refresh_metrics_history(self.quick_metrics_member_id)
+        self.entry_h.focus_set()
 
     def open_edit_dialog(self, member_data):
         """Mở cửa sổ popup để sửa đổi thông tin cơ bản"""
@@ -1197,6 +1431,7 @@ class GymManagementApp(ctk.CTk):
         )
         self.entry_member_search.pack(fill="x")
         self.entry_member_search.bind("<KeyRelease>", self.on_checkin_typing)
+        self._bind_suggestion_keys(self.entry_member_search)
 
         # Cột nhập chiều cao / cân nặng
         col_stats = ctk.CTkFrame(top_grid, fg_color="transparent")
@@ -1312,6 +1547,7 @@ class GymManagementApp(ctk.CTk):
             pass
 
     def reset_metrics_input(self):
+        self.quick_metrics_member_id = None
         self.entry_member_search.delete(0, "end")
         self.entry_h.delete(0, "end")
         self.entry_w.delete(0, "end")
@@ -1329,20 +1565,23 @@ class GymManagementApp(ctk.CTk):
             messagebox.showwarning("Chú ý", "Nhập đủ Tên, Cao, Nặng!")
             return
         try:
-            success_s, data = search_member_logic(name, "name")
-            if success_s and data:
+            m_id = self.quick_metrics_member_id
+            if m_id is None:
+                success_s, data = search_member_logic(name, "name")
+                if not success_s or not data:
+                    messagebox.showerror("❌ Lỗi", f"Không tìm thấy hội viên: {name}")
+                    return
                 m_id = data[0]["id"]
-                success_save, msg = save_body_metrics(
-                    m_id, h, w, self.entry_note.get()
-                )
-                if success_save:
-                    messagebox.showinfo("✅ Thành công", msg)
-                    self.refresh_metrics_history(m_id)
-                    self.reset_metrics_input()
-                else:
-                    messagebox.showerror("❌ Lỗi", msg)
+
+            success_save, msg = save_body_metrics(
+                m_id, h, w, self.entry_note.get()
+            )
+            if success_save:
+                messagebox.showinfo("✅ Thành công", msg)
+                self.refresh_metrics_history(m_id)
+                self.reset_metrics_input()
             else:
-                messagebox.showerror("❌ Lỗi", f"Không tìm thấy hội viên: {name}")
+                messagebox.showerror("❌ Lỗi", msg)
         except ValueError:
             messagebox.showerror("❌ Lỗi", "Chiều cao/Cân nặng phải là số!")
 
@@ -1445,7 +1684,7 @@ class GymManagementApp(ctk.CTk):
         self.clear_main_frame()
         self.render_title(
             "DANH SÁCH HỘI VIÊN",
-            "Tổng hợp toàn bộ hội viên, thời hạn gói tập và trạng thái hoạt động",
+            "Tìm nhanh theo tên/SĐT, lọc hạn tập và nhấp đúp một dòng để mở hồ sơ",
         )
 
         table_wrapper = ctk.CTkFrame(
@@ -1457,7 +1696,29 @@ class GymManagementApp(ctk.CTk):
         )
         table_wrapper.pack(fill="both", expand=True)
 
-        # Header cố định phía trên bảng
+        toolbar = ctk.CTkFrame(table_wrapper, fg_color="transparent")
+        toolbar.pack(fill="x", padx=14, pady=(14, 6))
+        self.member_list_search = ctk.CTkEntry(
+            toolbar,
+            placeholder_text="🔎 Lọc nhanh theo tên hoặc số điện thoại...",
+            height=38,
+            corner_radius=9,
+            fg_color=COLORS["input_bg"],
+            border_color=COLORS["border"],
+        )
+        self.member_list_search.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        self.member_list_search.bind("<KeyRelease>", lambda event: self._render_member_list_rows())
+
+        self.member_list_filter_var = ctk.StringVar(value="Tất cả")
+        ctk.CTkSegmentedButton(
+            toolbar,
+            values=["Tất cả", "Đang tập", "Sắp hết hạn", "Quá hạn"],
+            variable=self.member_list_filter_var,
+            command=self._render_member_list_rows,
+            height=36,
+            font=ctk.CTkFont(family="Inter", size=11, weight="bold"),
+        ).pack(side="right")
+
         headers = [
             ("Họ và Tên Hội Viên", 220),
             ("Số Điện Thoại", 140),
@@ -1465,10 +1726,8 @@ class GymManagementApp(ctk.CTk):
             ("Thời Hạn Còn", 120),
             ("Trạng Thái", 110),
         ]
-        header_frame = ctk.CTkFrame(
-            table_wrapper, fg_color=COLORS["input_bg"], corner_radius=10
-        )
-        header_frame.pack(fill="x", padx=14, pady=(14, 6))
+        header_frame = ctk.CTkFrame(table_wrapper, fg_color=COLORS["input_bg"], corner_radius=10)
+        header_frame.pack(fill="x", padx=14, pady=(0, 6))
         for text, width in headers:
             ctk.CTkLabel(
                 header_frame,
@@ -1479,75 +1738,135 @@ class GymManagementApp(ctk.CTk):
                 text_color=COLORS["subtext"],
             ).pack(side="left", padx=12, pady=10)
 
-        container = ctk.CTkScrollableFrame(table_wrapper, fg_color="transparent")
-        container.pack(fill="both", expand=True, padx=8, pady=(0, 10))
+        self.member_list_container = ctk.CTkScrollableFrame(table_wrapper, fg_color="transparent")
+        self.member_list_container.pack(fill="both", expand=True, padx=8, pady=(0, 10))
 
         success, members = get_all_members_summary_logic()
-        if success and members:
-            for idx, m in enumerate(members):
-                row_bg = COLORS["card_inner"] if idx % 2 == 0 else "transparent"
-                row = ctk.CTkFrame(container, fg_color=row_bg, corner_radius=8)
-                row.pack(fill="x", pady=2, padx=4)
+        self.member_list_load_error = None if success else str(members)
+        self.member_list_members = [dict(member) for member in members] if success and members else []
+        self._render_member_list_rows()
 
-                ctk.CTkLabel(
-                    row,
-                    text=m["ho_ten"],
-                    width=220,
-                    anchor="w",
-                    font=ctk.CTkFont(family="Inter", size=13, weight="bold"),
-                ).pack(side="left", padx=12, pady=9)
-                ctk.CTkLabel(
-                    row,
-                    text=m["so_dien_thoai"],
-                    width=140,
-                    anchor="w",
-                    text_color=COLORS["subtext"],
-                ).pack(side="left", padx=12, pady=9)
-                ctk.CTkLabel(
-                    row,
-                    text=m["ngay_het_han"],
-                    width=140,
-                    anchor="w",
-                ).pack(side="left", padx=12, pady=9)
+    def _render_member_list_rows(self, selected_filter=None):
+        """Vẽ lại các dòng theo bộ lọc và từ khóa, không truy vấn lại DB mỗi lần gõ."""
+        if not hasattr(self, "member_list_container") or not self.member_list_container.winfo_exists():
+            return
+        for widget in self.member_list_container.winfo_children():
+            widget.destroy()
 
-                days_left = m["so_ngay_con_lai"]
-                text_days = f"{days_left} ngày" if days_left is not None else "N/A"
-                if days_left is not None and days_left < 0:
-                    color_days = COLORS["danger"]
-                elif days_left is not None and days_left <= 7:
-                    color_days = COLORS["warning"]
-                else:
-                    color_days = COLORS["success"]
-
-                ctk.CTkLabel(
-                    row,
-                    text=text_days,
-                    width=120,
-                    anchor="w",
-                    text_color=color_days,
-                    font=ctk.CTkFont(family="Inter", size=12, weight="bold"),
-                ).pack(side="left", padx=12, pady=9)
-
-                status_val = m["trang_thai"] if "trang_thai" in m.keys() else "Active"
-                st_color = (
-                    COLORS["success"]
-                    if status_val == "Active"
-                    else (COLORS["danger"] if status_val == "Locked" else COLORS["muted"])
-                )
-                ctk.CTkLabel(
-                    row,
-                    text=status_val,
-                    width=110,
-                    anchor="w",
-                    text_color=st_color,
-                    font=ctk.CTkFont(family="Inter", size=12, weight="bold"),
-                ).pack(side="left", padx=12, pady=9)
-        else:
+        if self.member_list_load_error:
             ctk.CTkLabel(
-                container,
-                text="Chưa có dữ liệu hội viên.",
+                self.member_list_container,
+                text=f"Không tải được danh sách hội viên: {self.member_list_load_error}",
+                text_color=COLORS["danger"],
+                wraplength=700,
+            ).pack(pady=40)
+            return
+
+        query = self.member_list_search.get().strip().casefold() if hasattr(self, "member_list_search") else ""
+        chosen_filter = self.member_list_filter_var.get() if hasattr(self, "member_list_filter_var") else "Tất cả"
+        visible_members = []
+        for member in self.member_list_members:
+            name_and_phone = f"{member.get('ho_ten', '')} {member.get('so_dien_thoai', '')}".casefold()
+            if query and query not in name_and_phone:
+                continue
+
+            days_left = member.get("so_ngay_con_lai")
+            status = member.get("trang_thai", "Active")
+            if chosen_filter == "Đang tập":
+                if not (status == "Active" and days_left is not None and days_left > 7):
+                    continue
+            elif chosen_filter == "Sắp hết hạn":
+                if not (status == "Active" and days_left is not None and 0 <= days_left <= 7):
+                    continue
+            elif chosen_filter == "Quá hạn":
+                if days_left is None or days_left >= 0:
+                    continue
+            visible_members.append(member)
+
+        if not visible_members:
+            ctk.CTkLabel(
+                self.member_list_container,
+                text="Không có hội viên phù hợp với bộ lọc hiện tại.",
                 text_color=COLORS["muted"],
             ).pack(pady=40)
+            return
+
+        for idx, member in enumerate(visible_members):
+            row_bg = COLORS["card_inner"] if idx % 2 == 0 else "transparent"
+            row = ctk.CTkFrame(self.member_list_container, fg_color=row_bg, corner_radius=8)
+            row.pack(fill="x", pady=2, padx=4)
+
+            ctk.CTkLabel(
+                row,
+                text=member.get("ho_ten", ""),
+                width=220,
+                anchor="w",
+                font=ctk.CTkFont(family="Inter", size=13, weight="bold"),
+            ).pack(side="left", padx=12, pady=9)
+            ctk.CTkLabel(
+                row,
+                text=member.get("so_dien_thoai", ""),
+                width=140,
+                anchor="w",
+                text_color=COLORS["subtext"],
+            ).pack(side="left", padx=12, pady=9)
+            ctk.CTkLabel(
+                row,
+                text=member.get("ngay_het_han", ""),
+                width=140,
+                anchor="w",
+            ).pack(side="left", padx=12, pady=9)
+
+            days_left = member.get("so_ngay_con_lai")
+            text_days = f"{days_left} ngày" if days_left is not None else "N/A"
+            if days_left is not None and days_left < 0:
+                color_days = COLORS["danger"]
+            elif days_left is not None and days_left <= 7:
+                color_days = COLORS["warning"]
+            else:
+                color_days = COLORS["success"]
+            ctk.CTkLabel(
+                row,
+                text=text_days,
+                width=120,
+                anchor="w",
+                text_color=color_days,
+                font=ctk.CTkFont(family="Inter", size=12, weight="bold"),
+            ).pack(side="left", padx=12, pady=9)
+
+            status = member.get("trang_thai", "Active")
+            status_color = (
+                COLORS["success"] if status == "Active"
+                else (COLORS["danger"] if status == "Locked" else COLORS["muted"])
+            )
+            ctk.CTkLabel(
+                row,
+                text=status,
+                width=110,
+                anchor="w",
+                text_color=status_color,
+                font=ctk.CTkFont(family="Inter", size=12, weight="bold"),
+            ).pack(side="left", padx=12, pady=9)
+
+            callback = lambda event, member_id=member["id"], member_name=member.get("ho_ten", ""): self.open_member_profile_from_list(member_id, member_name)
+            row.bind("<Double-Button-1>", callback)
+            for child in row.winfo_children():
+                child.bind("<Double-Button-1>", callback)
+
+    def open_member_profile_from_list(self, member_id, member_name):
+        """Mở hồ sơ đúng ID kể cả khi có nhiều hội viên trùng tên."""
+        self.navigate("search", self.show_search_screen)
+        success, results = search_member_logic(member_name, "name")
+        if not success:
+            self.show_toast(f"Không tải được hồ sơ hội viên: {results}", success=False)
+            return
+        profile = next((item for item in results if item.get("id") == member_id), None)
+        if profile is None:
+            self.show_toast("Không tìm thấy hồ sơ hội viên đã chọn.", success=False)
+            return
+        self.entry_search.delete(0, tk.END)
+        self.entry_search.insert(0, member_name)
+        self.display_member_full_profile(profile)
 
     # ================= 7. MÀN HÌNH BÁO CÁO DOANH THU =================
 
