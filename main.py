@@ -66,22 +66,6 @@ COLORS = {
     "muted": "#64748B",        # Chữ mờ
 }
 
-# Mức mặc định được suy ra từ ví dụ hiện có trên giao diện (500.000đ đăng ký,
-# 450.000đ gia hạn cho 1 tháng). Hãy chỉnh các mức này theo bảng giá thực tế của phòng gym.
-# Người dùng vẫn có thể sửa trực tiếp số tiền trước khi lưu giao dịch.
-REGISTRATION_PACKAGE_PRICES = {
-    "1 tháng": 500_000,
-    "3 tháng": 1_500_000,
-    "6 tháng": 3_000_000,
-    "12 tháng": 6_000_000,
-}
-RENEWAL_PACKAGE_PRICES = {
-    "1 tháng": 450_000,
-    "3 tháng": 1_350_000,
-    "6 tháng": 2_700_000,
-    "12 tháng": 5_400_000,
-}
-
 ctk.set_appearance_mode("dark")
 
 
@@ -414,22 +398,6 @@ class GymManagementApp(ctk.CTk):
             cursor_target += 1
         widget.icursor(cursor_target)
 
-    def _set_currency_entry(self, widget, amount):
-        widget.delete(0, tk.END)
-        widget.insert(0, f"{int(amount):,}")
-
-    def update_registration_price(self, package):
-        if hasattr(self, "entry_price") and self.entry_price.winfo_exists():
-            amount = REGISTRATION_PACKAGE_PRICES.get(package)
-            if amount is not None:
-                self._set_currency_entry(self.entry_price, amount)
-
-    def update_renewal_price(self, package):
-        if hasattr(self, "entry_renew_price") and self.entry_renew_price.winfo_exists():
-            amount = RENEWAL_PACKAGE_PRICES.get(package)
-            if amount is not None:
-                self._set_currency_entry(self.entry_renew_price, amount)
-
     def show_toast(self, message, success=True, beep=False):
         """Banner không chặn luồng thao tác, tự đóng sau 2,5 giây."""
         if self._toast_after_id is not None:
@@ -656,14 +624,12 @@ class GymManagementApp(ctk.CTk):
             border_color=COLORS["border"],
             button_color=COLORS["border"],
             dropdown_fg_color=COLORS["card_inner"],
-            command=self.update_registration_price,
         ).pack(fill="x")
 
         self.entry_price = self._create_labeled_field(
             form_grid, 3, 1, "💰 Giá tiền thanh toán (VNĐ) *", "Ví dụ: 500000"
         )
         self._bind_currency_format(self.entry_price)
-        self.update_registration_price(self.package_var.get())
 
         # Nút xác nhận
         action_bar = ctk.CTkFrame(card, fg_color="transparent")
@@ -944,7 +910,6 @@ class GymManagementApp(ctk.CTk):
             border_color=COLORS["border"],
             button_color=COLORS["border"],
             dropdown_fg_color=COLORS["card_inner"],
-            command=self.update_renewal_price,
         ).pack(fill="x")
 
         # Cột phải: Số tiền
@@ -967,7 +932,6 @@ class GymManagementApp(ctk.CTk):
         )
         self.entry_renew_price.pack(fill="x")
         self._bind_currency_format(self.entry_renew_price)
-        self.update_renewal_price(self.renew_month_var.get())
 
         ctk.CTkButton(
             inner,
@@ -1005,7 +969,6 @@ class GymManagementApp(ctk.CTk):
                 self.after(0, lambda: messagebox.showinfo("Kết quả", msg))
                 if success:
                     self.after(0, lambda: self.entry_cccd_renew.delete(0, "end"))
-                    self.after(0, lambda: self.update_renewal_price(self.renew_month_var.get()))
                     self.selected_cccd = None
             except ValueError:
                 self.after(
