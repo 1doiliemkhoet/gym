@@ -883,14 +883,14 @@ class GymManagementApp(ctk.CTk):
 
         ctk.CTkLabel(
             inner,
-            text="🔍 Tìm hội viên cần gia hạn (Tên hoặc SĐT) *",
+            text="🔍 Tìm hội viên cần gia hạn (Tên, SĐT hoặc CCCD) *",
             font=ctk.CTkFont(family="Inter", size=12, weight="bold"),
             text_color=COLORS["subtext"],
         ).pack(anchor="w", pady=(0, 6))
 
         self.entry_cccd_renew = ctk.CTkEntry(
             inner,
-            placeholder_text="Gõ tên hoặc số điện thoại để chọn từ gợi ý...",
+            placeholder_text="Gõ tên/SĐT để chọn gợi ý hoặc dùng CCCD từ hồ sơ...",
             height=44,
             corner_radius=10,
             fg_color=COLORS["input_bg"],
@@ -986,7 +986,7 @@ class GymManagementApp(ctk.CTk):
                 self.after(0, lambda: messagebox.showinfo("Kết quả", msg))
                 if success:
                     self.after(0, lambda: self.entry_cccd_renew.delete(0, "end"))
-                    self.after(0, lambda: self.entry_renew_price.delete(0, "end"))
+                    self.after(0, lambda: self.update_renewal_price(self.renew_month_var.get()))
                     self.selected_cccd = None
             except ValueError:
                 self.after(
@@ -1392,6 +1392,7 @@ class GymManagementApp(ctk.CTk):
     # ================= 5. MÀN HÌNH THEO DÕI SỨC KHỎE =================
 
     def show_metrics_screen(self):
+        self.quick_metrics_member_id = None
         self.clear_main_frame()
         self.render_title(
             "THEO DÕI CHỈ SỐ SỨC KHỎE (BMI)",
