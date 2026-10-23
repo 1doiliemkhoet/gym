@@ -4,16 +4,16 @@ from database import get_connection, decrypt_cccd
 
 
 def _normalize_name(value):
-    """Chuẩn hóa tên để xếp hạng kết quả nhất quán với chữ tiếng Việt."""
-    value = unicodedata.normalize("NFD", str(value or "")).casefold()
-    value = "".join(
-        char for char in value if unicodedata.category(char) != "Mn"
+    """Chuẩn hóa tên để không phụ thuộc hoa/thường, dấu hay dạng Unicode NFC/NFD."""
+    text = unicodedata.normalize("NFD", str(value or "")).casefold()
+    text = "".join(
+        char for char in text if unicodedata.category(char) != "Mn"
     )
-    return value.replace("đ", "d")
+    return text.replace("đ", "d")
 
 
 def _match_rank(name, query):
-    """Ưu tiên họ tên bắt đầu bằng cụm tìm kiếm và khớp ở tên gọi cuối."""
+    """Ưu tiên tên gọi cuối trùng từ khóa trước các phần khác của họ tên."""
     normalized_name = _normalize_name(name).strip()
     normalized_query = _normalize_name(query).strip()
     if not normalized_query or normalized_query not in normalized_name:
@@ -36,7 +36,7 @@ def _match_rank(name, query):
 
 
 def get_checkin_suggestions(query):
-    """Gợi ý tối đa 10 hội viên; ưu tiên tên gọi khi tìm bằng tên riêng."""
+    """Tìm gợi ý theo mọi phần của họ tên, kể cả khi Unicode được nhập khác dạng lưu."""
     query = str(query or "").strip()
     if not query:
         return []
@@ -44,13 +44,17 @@ def get_checkin_suggestions(query):
     conn = None
     try:
         conn = get_connection()
+        # SQLite LIKE không chuẩn hóa đầy đủ chữ hoa/thường và Unicode tiếng Việt.
+        # Chuẩn hóa cả hai phía bên trong truy vấn để không bỏ lỡ tên có dấu.
+        conn.create_function("normalize_name", 1, _normalize_name)
         cursor = conn.cursor()
-
-        # Không giới hạn ngay trong SQL: LIMIT 10 không có ORDER BY có thể
-        # loại mất hội viên cần tìm khi nhiều tên khác cũng chứa từ khóa.
         cursor.execute(
-            "SELECT ho_ten, so_dien_thoai, cccd FROM members WHERE ho_ten LIKE ?",
-            (f"%{query}%",),
+            """
+            SELECT ho_ten, so_dien_thoai, cccd
+            FROM members
+            WHERE instr(normalize_name(COALESCE(ho_ten, '')), normalize_name(?)) > 0
+            """,
+            (query,),
         )
         rows = cursor.fetchall()
 
